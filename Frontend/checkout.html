@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        (function () {
+            const storageKey = "goneInABiteeThemePreference";
+            let storedTheme = null;
+
+            try {
+                storedTheme = localStorage.getItem(storageKey);
+            } catch (error) {
+                storedTheme = null;
+            }
+
+            const theme = storedTheme === "day" || storedTheme === "night"
+                ? storedTheme
+                : (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "night" : "day");
+
+            document.documentElement.setAttribute("data-theme", theme);
+        }());
+    </script>
+    <title>Checkout | Gone in a Bitee</title>
+    <link href="https://fonts.googleapis.com/css2?family=Limelight&display=block" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script src="config.js"></script>
+    <script src="https://sandbox.web.squarecdn.com/v1/square.js"></script>
+</head>
+
+<body>
+    <header class="site-header">
+        <h1 class="limelight-regular site-logo">Gone in a Bitee</h1>
+        <nav class="site-nav" aria-label="Main Navigation">
+            <a href="main page.html" class="nav-link">Home</a>
+            <a href="product.html" class="nav-link">Products</a>
+            <a href="about.html" class="nav-link">About</a>
+            <a href="ambassador.html" class="nav-link">Ambassadors</a>
+            <a href="catering.html" class="nav-link">Catering</a>
+            <a href="checkout.html" class="nav-link nav-link-active" aria-current="page">Cart</a>
+        </nav>
+        <script src="nav-bootstrap.js"></script>
+        <div class="site-header-actions">
+            <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false"
+                aria-label="Switch to night mode">
+                Night Mode
+            </button>
+            <script>
+                (function () {
+                    const toggle = document.getElementById("theme-toggle");
+                    const isNight = document.documentElement.getAttribute("data-theme") === "night";
+                    toggle.textContent = isNight ? "Day Mode" : "Night Mode";
+                    toggle.setAttribute("aria-pressed", String(isNight));
+                    toggle.setAttribute("aria-label", isNight ? "Switch to day mode" : "Switch to night mode");
+                }());
+            </script>
+        </div>
+    </header>
+
+    <!-- Main Content Section -->
+    <main class="page-content checkout-page">
+        <div id="checkout-content-root"></div>
+    </main>
+
+    <!-- Footer Section -->
+    <footer class="site-footer">
+        <p class="footer-text">Instagram: @Goneinabitee | Phone: (470)-420-8559 | Email: Goneinabitee@gmail.com</p>
+        <a href="product.html" class="shop-footer-btn" aria-label="Go to products" title="Products">
+            <span>Back to Products</span>
+        </a>
+    </footer>
+
+    <script src="site.js"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="checkout-content.js"></script>
+    <script>
+        const CART_STORAGE_KEY = "goneInABiteeCart";
+        const REWARDS_STORAGE_KEY = "goneInABiteeRewardOrders";
+        const REWARD_GOAL = 10;
+        const REWARD_DISCOUNT = 30;
+        const FRONTEND_CONFIG = window.GoneInABiteeConfig || {};
+        const API_BASE = FRONTEND_CONFIG.apiBaseUrl || "http://localhost:3001";
+        const SQUARE_APP_ID = FRONTEND_CONFIG.squareAppId || "REPLACE_WITH_YOUR_SQUARE_APP_ID";
+        const SQUARE_LOCATION_ID = FRONTEND_CONFIG.squareLocationId || "REPLACE_WITH_YOUR_SQUARE_LOCATION_ID";
+
+        // Read the cart data from localStorage, returning an array of cart items
+        function readCart() {
+            try {
+                const raw = localStorage.getItem(CART_STORAGE_KEY);
+                return raw ? JSON.parse(raw) : [];
+            } catch (error) {
+                return [];
+            }
+        }
+
+        // Save the cart data to localStorage as a JSON string
+        function saveCart(cart) {
+            localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
+        }
+
+        function readRewardOrders() {
+            const raw = localStorage.getItem(REWARDS_STORAGE_KEY);
+            const parsed = Number.parseInt(raw ?? "0", 10);
+            return Number.isNaN(parsed) || parsed < 0 ? 0 : parsed;
+        }
+
+        function saveRewardOrders(totalOrders) {
+            localStorage.setItem(REWARDS_STORAGE_KEY, String(totalOrders));
+        }
+
+        function getRewardProgress(totalOrders) {
+            if (totalOrders > 0 && totalOrders % REWARD_GOAL === 0) {
+                return REWARD_GOAL;
+            }
+
+            return totalOrders % REWARD_GOAL;
+        }
+
+        function recordCompletedOrder() {
+            const nextTotalOrders = readRewardOrders() + 1;
+            saveRewardOrders(nextTotalOrders);
+            return nextTotalOrders;
+        }
+
+        // Change the quantity of a cart item by a specified delta (positive or negative)
+        function changeQuantity(id, delta) {
+            const cart = readCart();
+            const item = cart.find((entry) => entry.id === id);
+            if (!item) {
+                return;
+            }
+
+            item.qty += delta;
+            const filtered = cart.filter((entry) => entry.qty > 0);
+            saveCart(filtered);
+            renderCart();
+        }
+
+        // Get the total count of items in the cart
+        function removeItem(id) {
+            const cart = readCart().filter((entry) => entry.id !== id);
+            saveCart(cart);
+            renderCart();
+        }
+
+        // Get the total count of items in the cart
+        function clearCart() {
+            saveCart([]);
+            renderCart();
+        }
+
+        // Place the order by clearing the cart and showing a confirmation message
+        function placeOrder() {
+            const cart = readCart();
+            if (cart.length === 0) {
+                alert("Your cart is empty.");
+                return;
+            }
+
+            const totalOrders = recordCompletedOrder();
+            const rewardProgress = getRewardProgress(totalOrders);
+
+            if (rewardProgress === REWARD_GOAL) {
+                alert(`Order placed! Thank you for your purchase. You unlocked a ${REWARD_DISCOUNT}% discount reward.`);
+            } else {
+                alert(`Order placed! Thank you for your purchase. Rewards progress: ${rewardProgress}/${REWARD_GOAL}.`);
+            }
+
+            clearCart();
+            window.GoneInABiteeSite.renderRewards();
+        }
+
+        let squareCard = null;
+
+        async function initSquareCard() {
+            const cardContainer = document.getElementById("card-container");
+            if (!window.Square) {
+                cardContainer.textContent = "Square SDK failed to load.";
+                return;
+            }
+
+            if (SQUARE_APP_ID.includes("REPLACE_WITH") || SQUARE_LOCATION_ID.includes("REPLACE_WITH")) {
+                cardContainer.textContent = "Square App ID and Location ID are required before card payments can run.";
+                return;
+            }
+
+            try {
+                const payments = window.Square.payments(SQUARE_APP_ID, SQUARE_LOCATION_ID);
+                squareCard = await payments.card();
+                await squareCard.attach("#card-container");
+            } catch (error) {
+                cardContainer.textContent = "Could not initialize the card form.";
+                console.error("Square card initialization failed", error);
+            }
+        }
+
+        async function showSquareCardPayment() {
+            const cart = readCart();
+            if (cart.length === 0) {
+                alert("Your cart is empty.");
+                return;
+            }
+
+            const authToken = window.GoneInABiteeSite && window.GoneInABiteeSite.getAuthToken
+                ? window.GoneInABiteeSite.getAuthToken()
+                : "";
+            if (!authToken) {
+                alert("Please log in before placing an order.");
+                window.location.href = "login.html";
+                return;
+            }
+
+            if (!squareCard) {
+                alert("Card form is not ready yet. Please check your Square IDs and try again.");
+                return;
+            }
+
+            const button = document.getElementById("square-card-btn");
+            button.disabled = true;
+            button.textContent = "Processing Card...";
+
+            try {
+                const tokenResult = await squareCard.tokenize();
+                if (tokenResult.status !== "OK") {
+                    throw new Error("Card tokenization failed.");
+                }
+
+                const orderRes = await fetch(`${API_BASE}/orders`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${authToken}`,
+                    },
+                    body: JSON.stringify({
+                        items: cart.map((item) => ({
+                            id: item.id,
+                            name: item.name,
+                            price: item.price,
+                            qty: item.qty,
+                        })),
+                    }),
+                });
+
+                if (!orderRes.ok) {
+                    throw new Error("Could not create order before card payment.");
+                }
+
+                const order = await orderRes.json();
+
+                const paymentRes = await fetch(`${API_BASE}/orders/${order.id}/square/card`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${authToken}`,
+                    },
+                    body: JSON.stringify({
+                        sourceId: tokenResult.token,
+                        idempotencyKey: crypto.randomUUID(),
+                    }),
+                });
+
+                const paymentBody = await paymentRes.json();
+                if (!paymentRes.ok) {
+                    throw new Error(paymentBody.error || "Card payment failed.");
+                }
+
+                const totalOrders = recordCompletedOrder();
+                const rewardProgress = getRewardProgress(totalOrders);
+                const rewardMsg = rewardProgress === REWARD_GOAL
+                    ? ` You unlocked a ${REWARD_DISCOUNT}% discount reward!`
+                    : ` Rewards: ${rewardProgress}/${REWARD_GOAL}.`;
+
+                alert(`Card payment successful.${rewardMsg}`);
+                clearCart();
+                window.GoneInABiteeSite.renderRewards();
+            } catch (error) {
+                console.error("Square card payment failed", error);
+                alert(`Card payment error: ${error.message}`);
+            } finally {
+                button.disabled = false;
+                button.textContent = "Pay with Card (Square)";
+            }
+        }
+
+        // Validate that the selected catering date is not in the past
+        function renderCart() {
+            const cart = readCart();
+            const emptyState = document.getElementById("cart-empty");
+            const cartContent = document.getElementById("cart-content");
+            const cartItems = document.getElementById("cart-items");
+            const totalItemsElement = document.getElementById("total-items");
+            const totalPriceElement = document.getElementById("total-price");
+
+            if (cart.length === 0) {
+                emptyState.hidden = false;
+                cartContent.hidden = true;
+                cartItems.innerHTML = "";
+                totalItemsElement.textContent = "0";
+                totalPriceElement.textContent = "$0.00";
+                return;
+            }
+
+            emptyState.hidden = true;
+            cartContent.hidden = false;
+
+            let totalItems = 0;
+            let totalPrice = 0;
+
+            cartItems.innerHTML = cart.map((item) => {
+                totalItems += item.qty;
+                totalPrice += item.price * item.qty;
+
+                return `
+					<article class="checkout-item">
+						<div>
+							<h3>${item.name}</h3>
+							<p>$${item.price.toFixed(2)} each</p>
+						</div>
+						<div class="checkout-item-actions">
+							<button type="button" class="qty-btn" data-action="decrease" data-id="${item.id}">-</button>
+							<span class="qty-value">${item.qty}</span>
+							<button type="button" class="qty-btn" data-action="increase" data-id="${item.id}">+</button>
+							<button type="button" class="qty-btn remove-btn" data-action="remove" data-id="${item.id}">Remove</button>
+						</div>
+					</article>
+				`;
+            }).join("");
+
+            totalItemsElement.textContent = String(totalItems);
+            totalPriceElement.textContent = `$${totalPrice.toFixed(2)}`;
+        }
+
+        document.getElementById("cart-items").addEventListener("click", (event) => {
+            const button = event.target.closest("button");
+            if (!button) {
+                return;
+            }
+
+            const id = button.dataset.id;
+            const action = button.dataset.action;
+
+            if (action === "increase") {
+                changeQuantity(id, 1);
+            } else if (action === "decrease") {
+                changeQuantity(id, -1);
+            } else if (action === "remove") {
+                removeItem(id);
+            }
+        });
+
+        document.getElementById("clear-cart-btn").addEventListener("click", clearCart);
+        document.getElementById("square-card-btn").addEventListener("click", showSquareCardPayment);
+
+        initSquareCard();
+        renderCart();
+    </script>
+</body>
+
+</html>

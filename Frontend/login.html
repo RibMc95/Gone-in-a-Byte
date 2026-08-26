@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        (function () {
+            const storageKey = "goneInABiteeThemePreference";
+            let storedTheme = null;
+
+            try {
+                storedTheme = localStorage.getItem(storageKey);
+            } catch (error) {
+                storedTheme = null;
+            }
+
+            const theme = storedTheme === "day" || storedTheme === "night"
+                ? storedTheme
+                : (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "night" : "day");
+
+            document.documentElement.setAttribute("data-theme", theme);
+        }());
+    </script>
+    <title>Login | Gone in a Bitee</title>
+    <link href="https://fonts.googleapis.com/css2?family=Limelight&display=block" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script src="config.js"></script>
+</head>
+
+<body>
+    <header class="site-header">
+        <h1 class="limelight-regular site-logo">Gone in a Bitee</h1>
+        <nav class="site-nav" aria-label="Main Navigation">
+            <a href="main page.html" class="nav-link">Home</a>
+            <a href="product.html" class="nav-link">Products</a>
+            <a href="about.html" class="nav-link">About</a>
+            <a href="ambassador.html" class="nav-link">Ambassadors</a>
+            <a href="catering.html" class="nav-link">Catering</a>
+            <a href="login.html" class="nav-link nav-link-active" aria-current="page">Login</a>
+        </nav>
+        <script src="nav-bootstrap.js"></script>
+        <div class="site-header-actions">
+            <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false"
+                aria-label="Switch to night mode">
+                Night Mode
+            </button>
+            <script>
+                (function () {
+                    const toggle = document.getElementById("theme-toggle");
+                    const isNight = document.documentElement.getAttribute("data-theme") === "night";
+                    toggle.textContent = isNight ? "Day Mode" : "Night Mode";
+                    toggle.setAttribute("aria-pressed", String(isNight));
+                    toggle.setAttribute("aria-label", isNight ? "Switch to day mode" : "Switch to night mode");
+                }());
+            </script>
+        </div>
+    </header>
+
+    <main class="page-content checkout-page">
+        <div id="login-content-root"></div>
+    </main>
+
+    <footer class="site-footer">
+        <p class="footer-text">Instagram: @Goneinabitee | Phone: (470)-420-8559 | Email: Goneinabitee@gmail.com</p>
+        <a href="checkout.html" class="shop-footer-btn" aria-label="Go to cart" title="Cart">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M3 4h2l2.2 9.2a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.5L21 7H7"></path>
+                <circle cx="10" cy="19" r="1.8"></circle>
+                <circle cx="17" cy="19" r="1.8"></circle>
+            </svg>
+            <span id="cart-button-label">Cart (0)</span>
+        </a>
+        <script src="footer-bootstrap.js"></script>
+    </footer>
+
+    <script src="site.js"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="login-content.js"></script>
+    <script>
+        (function () {
+            const FRONTEND_CONFIG = window.GoneInABiteeConfig || {};
+            const API_BASE = FRONTEND_CONFIG.apiBaseUrl || "http://localhost:3001";
+            const loginForm = document.getElementById("login-form");
+            const registerForm = document.getElementById("register-form");
+            const statusNode = document.getElementById("auth-status");
+            const loginEmailInput = document.getElementById("login-email");
+            const loginPasswordInput = document.getElementById("login-password");
+            const loginRememberInput = document.getElementById("login-remember");
+            const registerEmailInput = document.getElementById("register-email");
+            const registerPasswordInput = document.getElementById("register-password");
+            const registerRememberInput = document.getElementById("register-remember");
+
+            function setStatus(message, isError) {
+                statusNode.textContent = message;
+                statusNode.classList.toggle("auth-status-error", Boolean(isError));
+            }
+
+            async function submitAuth(path, emailInput, passwordInput, rememberInput) {
+                const email = String(emailInput.value || "").trim();
+                const password = String(passwordInput.value || "");
+                const remember = !rememberInput || Boolean(rememberInput.checked);
+
+                if (!email || password.length < 6) {
+                    setStatus("Email and a password with at least 6 characters are required.", true);
+                    return;
+                }
+
+                setStatus("Submitting...", false);
+
+                try {
+                    const response = await fetch(`${API_BASE}${path}`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ email, password }),
+                    });
+
+                    const body = await response.json().catch(() => ({}));
+                    if (!response.ok) {
+                        throw new Error(body.message || "Authentication request failed.");
+                    }
+
+                    if (!window.GoneInABiteeSite || !window.GoneInABiteeSite.saveAuthSession) {
+                        throw new Error("Site auth helpers are unavailable.");
+                    }
+
+                    window.GoneInABiteeSite.saveAuthSession({
+                        email: body.email || email,
+                        token: body.token,
+                    }, { remember: remember });
+
+                    setStatus("Success. Redirecting to cart...", false);
+                    window.location.href = "checkout.html";
+                } catch (error) {
+                    setStatus(error.message || "Request failed.", true);
+                }
+            }
+
+            loginForm.addEventListener("submit", function (event) {
+                event.preventDefault();
+                submitAuth("/login", loginEmailInput, loginPasswordInput, loginRememberInput);
+            });
+
+            registerForm.addEventListener("submit", function (event) {
+                event.preventDefault();
+                submitAuth("/register", registerEmailInput, registerPasswordInput, registerRememberInput);
+            });
+
+            if (window.GoneInABiteeSite && window.GoneInABiteeSite.isLoggedIn && window.GoneInABiteeSite.isLoggedIn()) {
+                setStatus("You are already logged in.", false);
+            }
+        }());
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        (function () {
+            const storageKey = "goneInABiteeThemePreference";
+            let storedTheme = null;
+            try { storedTheme = localStorage.getItem(storageKey); } catch (e) {}
+            const theme = storedTheme === "day" || storedTheme === "night"
+                ? storedTheme
+                : (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "night" : "day");
+            document.documentElement.setAttribute("data-theme", theme);
+        }());
+    </script>
+    <title>Square Connection | Gone in a Bitee</title>
+    <link href="https://fonts.googleapis.com/css2?family=Limelight&display=block" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .oauth-card {
+            max-width: 480px;
+            margin: 4rem auto;
+            padding: 2.5rem 2rem;
+            border: 1px solid var(--color-border, #ddd);
+            border-radius: 12px;
+            text-align: center;
+            background: var(--color-surface, #fff);
+        }
+        .oauth-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+        .oauth-card h2 {
+            margin-bottom: 0.75rem;
+        }
+        .oauth-card p {
+            line-height: 1.6;
+            opacity: 0.85;
+            margin-bottom: 1.5rem;
+        }
+        .oauth-merchant {
+            display: inline-block;
+            margin: 0.5rem 0 1.5rem;
+            padding: 0.4rem 1rem;
+            background: var(--color-accent-subtle, #e8f5e9);
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-family: monospace;
+            color: var(--color-text, #222);
+        }
+        .oauth-error-detail {
+            display: inline-block;
+            margin: 0.5rem 0 1.5rem;
+            padding: 0.4rem 1rem;
+            background: var(--color-error-subtle, #fdecea);
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-family: monospace;
+            color: #c0392b;
+        }
+        .btn-home {
+            display: inline-block;
+            padding: 0.75rem 2rem;
+            background: #006aff;
+            color: #fff;
+            border-radius: 8px;
+            font-weight: 600;
+            text-decoration: none;
+            transition: background 0.2s;
+        }
+        .btn-home:hover { background: #0052cc; }
+        .btn-retry {
+            display: inline-block;
+            margin-top: 0.75rem;
+            padding: 0.65rem 1.75rem;
+            border: 2px solid #006aff;
+            color: #006aff;
+            border-radius: 8px;
+            font-weight: 600;
+            text-decoration: none;
+            transition: background 0.2s, color 0.2s;
+        }
+        .btn-retry:hover { background: #006aff; color: #fff; }
+        .btn-row { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+    </style>
+</head>
+
+<body>
+    <header class="site-header">
+        <h1 class="limelight-regular site-logo">Gone in a Bitee</h1>
+        <nav class="site-nav" aria-label="Main Navigation">
+            <a href="main page.html" class="nav-link">Home</a>
+            <a href="product.html" class="nav-link">Products</a>
+            <a href="about.html" class="nav-link">About</a>
+            <a href="ambassador.html" class="nav-link">Ambassadors</a>
+            <a href="catering.html" class="nav-link">Catering</a>
+            <a href="login.html" class="nav-link">Login</a>
+        </nav>
+        <script src="nav-bootstrap.js"></script>
+        <div class="site-header-actions">
+            <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false"
+                aria-label="Switch to night mode">Night Mode</button>
+            <script>
+                (function () {
+                    const toggle = document.getElementById("theme-toggle");
+                    const isNight = document.documentElement.getAttribute("data-theme") === "night";
+                    toggle.textContent = isNight ? "Day Mode" : "Night Mode";
+                    toggle.setAttribute("aria-pressed", String(isNight));
+                    toggle.setAttribute("aria-label", isNight ? "Switch to day mode" : "Switch to night mode");
+                }());
+            </script>
+        </div>
+    </header>
+
+    <main class="page-content">
+        <div class="oauth-card" id="result-card">
+            <!-- Populated by script below -->
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p class="footer-text">Instagram: @Goneinabitee | Phone: (470)-420-8559 | Email: Goneinabitee@gmail.com</p>
+        <script src="footer-bootstrap.js"></script>
+    </footer>
+
+    <script>
+        (function () {
+            const params = new URLSearchParams(window.location.search);
+            const status = params.get("status");
+            const merchant = params.get("merchant");
+            const reason = params.get("reason");
+            const card = document.getElementById("result-card");
+
+            if (status === "success") {
+                document.title = "Account Connected | Gone in a Bitee";
+                card.innerHTML =
+                    '<div class="oauth-icon">&#10003;</div>' +
+                    '<h2>Account Connected!</h2>' +
+                    '<p>Your Square merchant account has been successfully linked to Gone in a Bitee.</p>' +
+                    (merchant ? '<div class="oauth-merchant">Merchant ID: ' + escapeHtml(merchant) + '</div>' : '') +
+                    '<p>You can now close this tab.</p>' +
+                    '<div class="btn-row"><a href="main page.html" class="btn-home">Go to Homepage</a></div>';
+            } else {
+                document.title = "Connection Failed | Gone in a Bitee";
+                const friendlyReason = friendlyError(reason);
+                card.innerHTML =
+                    '<div class="oauth-icon">&#10007;</div>' +
+                    '<h2>Connection Failed</h2>' +
+                    '<p>We were unable to connect your Square account.</p>' +
+                    (reason ? '<div class="oauth-error-detail">' + escapeHtml(friendlyReason) + '</div>' : '') +
+                    '<p>Please try again. If the problem persists, contact the site owner.</p>' +
+                    '<div class="btn-row">' +
+                    '<a href="oauth-connect.html" class="btn-retry">Try Again</a>' +
+                    '<a href="main page.html" class="btn-home">Go to Homepage</a>' +
+                    '</div>';
+            }
+
+            function escapeHtml(str) {
+                return String(str || "")
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;");
+            }
+
+            function friendlyError(code) {
+                const map = {
+                    invalid_state: "Security check failed. Please start the process again.",
+                    missing_code: "No authorization code was received from Square.",
+                    server_misconfigured: "Server configuration error. Contact the site owner.",
+                    square_sdk_unavailable: "Payment service is temporarily unavailable.",
+                    access_denied: "You declined the authorization request.",
+                };
+                return map[code] || (code || "An unknown error occurred.");
+            }
+        }());
+    </script>
+</body>
+
+</html>

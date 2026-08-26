@@ -1,0 +1,15 @@
+FROM node:20-bookworm-slim
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+# Install runtime dependencies for the API
+RUN npm init -y && npm install --omit=dev express square bcryptjs jsonwebtoken oracledb helmet express-rate-limit
+
+# Copy backend source files (all route modules used by Order.js)
+COPY *.js ./
+
+EXPOSE 3001
+
+CMD ["node", "Order.js"]

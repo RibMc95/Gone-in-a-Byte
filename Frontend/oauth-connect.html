@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        (function () {
+            const storageKey = "goneInABiteeThemePreference";
+            let storedTheme = null;
+            try { storedTheme = localStorage.getItem(storageKey); } catch (e) {}
+            const theme = storedTheme === "day" || storedTheme === "night"
+                ? storedTheme
+                : (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "night" : "day");
+            document.documentElement.setAttribute("data-theme", theme);
+        }());
+    </script>
+    <title>Connect Square Account | Gone in a Bitee</title>
+    <link href="https://fonts.googleapis.com/css2?family=Limelight&display=block" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script src="config.js"></script>
+    <style>
+        .oauth-card {
+            max-width: 480px;
+            margin: 4rem auto;
+            padding: 2.5rem 2rem;
+            border: 1px solid var(--color-border, #ddd);
+            border-radius: 12px;
+            text-align: center;
+            background: var(--color-surface, #fff);
+        }
+        .oauth-card h2 {
+            margin-bottom: 0.75rem;
+        }
+        .oauth-card p {
+            margin-bottom: 1.5rem;
+            line-height: 1.6;
+            opacity: 0.85;
+        }
+        .oauth-steps {
+            text-align: left;
+            margin: 0 auto 2rem;
+            padding-left: 1.25rem;
+            max-width: 340px;
+        }
+        .oauth-steps li {
+            margin-bottom: 0.5rem;
+            line-height: 1.5;
+        }
+        .btn-connect {
+            display: inline-block;
+            padding: 0.85rem 2.25rem;
+            background: #006aff;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            transition: background 0.2s;
+        }
+        .btn-connect:hover {
+            background: #0052cc;
+        }
+        .oauth-note {
+            margin-top: 1.25rem;
+            font-size: 0.8rem;
+            opacity: 0.6;
+        }
+    </style>
+</head>
+
+<body>
+    <header class="site-header">
+        <h1 class="limelight-regular site-logo">Gone in a Bitee</h1>
+        <nav class="site-nav" aria-label="Main Navigation">
+            <a href="main page.html" class="nav-link">Home</a>
+            <a href="product.html" class="nav-link">Products</a>
+            <a href="about.html" class="nav-link">About</a>
+            <a href="ambassador.html" class="nav-link">Ambassadors</a>
+            <a href="catering.html" class="nav-link">Catering</a>
+            <a href="login.html" class="nav-link">Login</a>
+        </nav>
+        <script src="nav-bootstrap.js"></script>
+        <div class="site-header-actions">
+            <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false"
+                aria-label="Switch to night mode">Night Mode</button>
+            <script>
+                (function () {
+                    const toggle = document.getElementById("theme-toggle");
+                    const isNight = document.documentElement.getAttribute("data-theme") === "night";
+                    toggle.textContent = isNight ? "Day Mode" : "Night Mode";
+                    toggle.setAttribute("aria-pressed", String(isNight));
+                    toggle.setAttribute("aria-label", isNight ? "Switch to day mode" : "Switch to night mode");
+                }());
+            </script>
+        </div>
+    </header>
+
+    <main class="page-content">
+        <div class="oauth-card">
+            <h2>Connect Your Square Account</h2>
+            <p>
+                To process payments through Gone in a Bitee, you need to authorize
+                our application to access your Square merchant account.
+            </p>
+            <ol class="oauth-steps">
+                <li>Click the button below.</li>
+                <li>Log in to your Square account.</li>
+                <li>Review the requested permissions.</li>
+                <li>Click <strong>Allow</strong> to connect.</li>
+            </ol>
+            <a id="connect-btn" class="btn-connect" href="#" aria-label="Connect your Square account">
+                Connect with Square
+            </a>
+            <p class="oauth-note">
+                You will be redirected to Square's secure authorization page.
+                Gone in a Bitee never sees your Square password.
+            </p>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p class="footer-text">Instagram: @Goneinabitee | Phone: (470)-420-8559 | Email: Goneinabitee@gmail.com</p>
+        <script src="footer-bootstrap.js"></script>
+    </footer>
+
+    <script>
+        (function () {
+            const config = window.GoneInABiteeConfig || {};
+            const apiBase = config.apiBaseUrl || "http://localhost:3001";
+            document.getElementById("connect-btn").href = apiBase + "/oauth/connect";
+        }());
+    </script>
+</body>
+
+</html>

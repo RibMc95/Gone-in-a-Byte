@@ -1,0 +1,41 @@
+# ============================================================
+# SECRETS & CREDENTIALS — never commit these
+# ============================================================
+.env
+.env.*
+!.env.example
+
+# Oracle DB wallet — contains live database credentials
+Wallet_CustomerAinfo/
+Wallet_CustomerAinfo.zip
+oracle-wallet/
+*.sso
+*.p12
+*.pem
+*.jks
+
+# ============================================================
+# PERSONAL / LOCAL TOOLING — not part of the product
+# ============================================================
+Claude.md
+.agents/
+.github/workflows/react-doctor.yml
+
+# ============================================================
+# INTERNAL NOTES — planning docs, not for a public repo
+# (delete these lines if you decide you want any of them public)
+# ============================================================
+docs/
+API checklist.txt
+Oracle API test list.txt
+Todo
+beforelaunch.txt
+database checklist.txt
+payment requirements.txt
+Costsforwebsite.txt
+
+# ============================================================
+# DEPENDENCIES / BUILD
+# ============================================================
+node_modules/
+npm-debug.log*

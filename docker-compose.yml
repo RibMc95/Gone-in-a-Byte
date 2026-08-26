@@ -1,0 +1,53 @@
+services:
+  backend:
+    build:
+      context: ./Backend
+      dockerfile: dockerfile
+    container_name: gone-in-a-bitee-backend
+    stop_grace_period: 30s
+    environment:
+      SQUARE_ACCESS_TOKEN: ${SQUARE_ACCESS_TOKEN}
+      SQUARE_ENVIRONMENT: ${SQUARE_ENVIRONMENT:-sandbox}
+      SQUARE_LOCATION_ID: ${SQUARE_LOCATION_ID}
+      SQUARE_APPLICATION_ID: ${SQUARE_APPLICATION_ID}
+      SQUARE_CLIENT_ID: ${SQUARE_CLIENT_ID}
+      SQUARE_APPLICATION_SECRET: ${SQUARE_APPLICATION_SECRET}
+      SQUARE_CLIENT_SECRET: ${SQUARE_CLIENT_SECRET}
+      SQUARE_OAUTH_REDIRECT_URI: ${SQUARE_OAUTH_REDIRECT_URI}
+      SQUARE_WEBHOOK_SIGNATURE_KEY: ${SQUARE_WEBHOOK_SIGNATURE_KEY}
+      SQUARE_WEBHOOK_NOTIFICATION_URL: ${SQUARE_WEBHOOK_NOTIFICATION_URL}
+      NODE_ENV: ${NODE_ENV:-production}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      PASSWORD_SALT_ROUNDS: ${PASSWORD_SALT_ROUNDS:-10}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:8080}
+      ORACLE_DB_USER: ${ORACLE_DB_USER}
+      ORACLE_DB_PASSWORD: ${ORACLE_DB_PASSWORD}
+      ORACLE_DB_CONNECT_STRING: ${ORACLE_DB_CONNECT_STRING}
+      ORACLE_WALLET_DIR: ${ORACLE_WALLET_DIR:-/app/wallet}
+      ORACLE_WALLET_PASSWORD: ${ORACLE_WALLET_PASSWORD}
+      ORACLE_ORDERS_TABLE: ${ORACLE_ORDERS_TABLE:-ORDERS}
+      ORACLE_HISTORY_TABLE: ${ORACLE_HISTORY_TABLE:-ORDER_HISTORY}
+    volumes:
+      - ${ORACLE_WALLET_HOST_PATH:-./oracle-wallet}:/app/wallet:ro
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./Frontend
+      dockerfile: dockerfile
+    container_name: gone-in-a-bitee-frontend
+    depends_on:
+      - backend
+    environment:
+      API_BASE_URL: ${API_BASE_URL:-http://localhost:3001}
+      SQUARE_APP_ID: ${SQUARE_APP_ID}
+      SQUARE_LOCATION_ID: ${SQUARE_LOCATION_ID}
+      SQUARE_ENVIRONMENT: ${SQUARE_ENVIRONMENT:-sandbox}
+      SQUARE_SDK_URL: ${SQUARE_SDK_URL:-https://sandbox.web.squarecdn.com/v1/square.js}
+      AFTERPAY_SCRIPT_URL: ${AFTERPAY_SCRIPT_URL:-https://portal.sandbox.afterpay.com/afterpay.js}
+    ports:
+      - "8080:80"
+    restart: unless-stopped

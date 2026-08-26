@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        (function () {
+            const storageKey = "goneInABiteeThemePreference";
+            let storedTheme = null;
+
+            try {
+                storedTheme = localStorage.getItem(storageKey);
+            } catch (error) {
+                storedTheme = null;
+            }
+
+            const theme = storedTheme === "day" || storedTheme === "night"
+                ? storedTheme
+                : (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "night" : "day");
+
+            document.documentElement.setAttribute("data-theme", theme);
+        }());
+    </script>
+    <title>Catering | Gone in a Bitee</title>
+    <link href="https://fonts.googleapis.com/css2?family=Limelight&display=block" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <!-- Header Section -->
+    <header class="site-header">
+        <h1 class="limelight-regular site-logo">Gone in a Bitee</h1>
+        <nav class="site-nav" aria-label="Main Navigation">
+            <a href="main page.html" class="nav-link">Home</a>
+            <a href="product.html" class="nav-link">Products</a>
+            <a href="about.html" class="nav-link">About</a>
+            <a href="ambassador.html" class="nav-link">Ambassadors</a>
+            <a href="catering.html" class="nav-link nav-link-active" aria-current="page">Catering</a>
+            <a href="checkout.html" class="nav-link">Cart</a>
+        </nav>
+        <script src="nav-bootstrap.js"></script>
+        <div class="site-header-actions">
+            <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false"
+                aria-label="Switch to night mode">
+                Night Mode
+            </button>
+            <script>
+                (function () {
+                    const toggle = document.getElementById("theme-toggle");
+                    const isNight = document.documentElement.getAttribute("data-theme") === "night";
+                    toggle.textContent = isNight ? "Day Mode" : "Night Mode";
+                    toggle.setAttribute("aria-pressed", String(isNight));
+                    toggle.setAttribute("aria-label", isNight ? "Switch to day mode" : "Switch to night mode");
+                }());
+            </script>
+        </div>
+    </header>
+
+    <main class="page-content">
+        <div id="catering-content-root"></div>
+    </main>
+
+    <!-- Footer Section -->
+    <footer class="site-footer">
+        <p class="footer-text">Instagram: @Goneinabitee | Phone: (470)-420-8559 | Email: Goneinabitee@gmail.com</p>
+        <a href="checkout.html" class="shop-footer-btn" aria-label="Go to cart" title="Cart">
+            <!--Button Icon-->
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M3 4h2l2.2 9.2a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.5L21 7H7"></path>
+                <circle cx="10" cy="19" r="1.8"></circle>
+                <circle cx="17" cy="19" r="1.8"></circle>
+            </svg>
+            <span id="cart-button-label">Cart (0)</span>
+        </a>
+        <script src="footer-bootstrap.js"></script>
+    </footer>
+
+    <!-- Page Scripts -->
+    <script src="config.js"></script>
+    <script src="site.js"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="catering-content.js"></script>
+    <script>
+        const CART_STORAGE_KEY = "goneInABiteeCart";
+        const CATERING_DATE_KEY = "goneInABiteeCateringDate";
+        const COOKIE_OPTIONS = [
+            { id: "classic-chip", name: "Classic Chip", price: 3 },
+            { id: "oatmeal-raisin", name: "Oatmeal Raisin", price: 3 },
+            { id: "snickerdoodle", name: "Snickerdoodle", price: 3 },
+            { id: "maple-snickerdoodle", name: "Maple Snickerdoodle", price: 4 },
+            { id: "sea-salt-caramel", name: "Sea Salt Caramel Cookie", price: 5 },
+            { id: "espresso-crunch", name: "Espresso Crunch", price: 5 },
+            { id: "pistachio-cranberry", name: "Pistachio Cranberry", price: 5 },
+        ];
+        const MIN_PACK_COOKIES = 5;
+        const MAX_PACK_COOKIES = 10;
+        let minimumDate = "";
+
+        const selections = Object.fromEntries(COOKIE_OPTIONS.map((cookie) => [cookie.id, 0]));
+
+        // Read and write cart from localStorage
+        function readCart() {
+            try {
+                const raw = localStorage.getItem(CART_STORAGE_KEY);
+                return raw ? JSON.parse(raw) : [];
+            } catch (error) {
+                return [];
+            }
+        }
+
+        // Save cart to localStorage
+        function saveCart(cart) {
+            localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
+        }
+
+        // Get total item count in cart
+        function getCartItemCount(cart) {
+            return cart.reduce((sum, item) => sum + item.qty, 0);
+        }
+
+        // Refresh cart item count label in the header
+        function refreshCartLabel() {
+            const cart = readCart();
+            const cartLabel = document.getElementById("cart-button-label");
+            cartLabel.textContent = `Cart (${getCartItemCount(cart)})`;
+        }
+
+        function ensureLoggedInForCart() {
+            if (window.GoneInABiteeSite && typeof window.GoneInABiteeSite.isLoggedIn === "function") {
+                if (!window.GoneInABiteeSite.isLoggedIn()) {
+                    window.location.href = "login.html";
+                    return false;
+                }
+
+                return true;
+            }
+
+            return true;
+        }
+
+        // Get total selected cookie count for the gift pack
+        function getSelectedCookieCount() {
+            return Object.values(selections).reduce((sum, count) => sum + count, 0);
+        }
+
+        // Get total price for the selected cookies in the gift pack
+        function getSelectedCookiePrice() {
+            return COOKIE_OPTIONS.reduce((sum, cookie) => sum + selections[cookie.id] * cookie.price, 0);
+        }
+
+        // Format date string (YYYY-MM-DD) into a more readable format
+        function formatDateForDisplay(dateValue) {
+            const parts = dateValue.split("-");
+            if (parts.length !== 3) {
+                return dateValue;
+            }
+
+            const [year, month, day] = parts.map(Number);
+            const date = new Date(year, month - 1, day);
+            return date.toLocaleDateString(undefined, {
+                weekday: "short",
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+            });
+        }
+
+        // Validate that the selected catering date is today or in the future
+        function isCateringDateValid(dateValue) {
+            return Boolean(dateValue) && dateValue >= minimumDate;
+        }
+
+        // Get the currently selected catering date from the input
+        function getScheduledDate() {
+            return document.getElementById("catering-date").value;
+        }
+
+        // Update the catering date status message based on the selected date
+        function updateCateringDateStatus() {
+            const dateValue = getScheduledDate();
+            const status = document.getElementById("catering-date-status");
+
+            if (!dateValue) {
+                status.textContent = "Select your catering date.";
+                return;
+            }
+
+            if (!isCateringDateValid(dateValue)) {
+                status.textContent = "Please choose today or a future date.";
+                return;
+            }
+
+            status.textContent = `Scheduled for ${formatDateForDisplay(dateValue)}.`;
+        }
+
+        // Initialize the catering date picker with minimum date and load saved date if valid
+        function initializeCateringDatePicker() {
+            const dateInput = document.getElementById("catering-date");
+            minimumDate = new Date().toISOString().split("T")[0];
+            dateInput.min = minimumDate;
+
+            const savedDate = localStorage.getItem(CATERING_DATE_KEY);
+            if (savedDate && savedDate >= minimumDate) {
+                dateInput.value = savedDate;
+            }
+
+            updateCateringDateStatus();
+
+            dateInput.addEventListener("change", () => {
+                const selectedDate = dateInput.value;
+                if (isCateringDateValid(selectedDate)) {
+                    localStorage.setItem(CATERING_DATE_KEY, selectedDate);
+                } else {
+                    localStorage.removeItem(CATERING_DATE_KEY);
+                }
+
+                updateCateringDateStatus();
+            });
+        }
+
+        // Render the gift pack cookie options with quantity controls
+        function renderGiftPackOptions() {
+            const optionsContainer = document.getElementById("gift-pack-options");
+            optionsContainer.innerHTML = COOKIE_OPTIONS.map((cookie) => `
+                <article class="gift-pack-option">
+                    <div>
+                        <h4>${cookie.name}</h4>
+                        <p>$${cookie.price.toFixed(2)} each</p>
+                    </div>
+                    <div class="gift-pack-qty-controls">
+                        <button type="button" class="qty-btn" data-action="decrease" data-id="${cookie.id}">-</button>
+                        <span class="qty-value" id="qty-${cookie.id}">${selections[cookie.id]}</span>
+                        <button type="button" class="qty-btn" data-action="increase" data-id="${cookie.id}">+</button>
+                    </div>
+                </article>
+            `).join("");
+        }
+
+        // Render the gift pack summary and update the status message and add button state
+        function renderGiftPackSummary() {
+            const totalCount = getSelectedCookieCount();
+            const totalPrice = getSelectedCookiePrice();
+            const status = document.getElementById("gift-pack-status");
+            const addButton = document.getElementById("add-gift-pack-btn");
+
+            document.getElementById("gift-pack-total-count").textContent = String(totalCount);
+            document.getElementById("gift-pack-total-price").textContent = `$${totalPrice.toFixed(2)}`;
+
+            if (totalCount < MIN_PACK_COOKIES) {
+                status.textContent = `Select ${MIN_PACK_COOKIES - totalCount} more cookie(s) to reach the minimum.`;
+                addButton.disabled = true;
+            } else if (totalCount > MAX_PACK_COOKIES) {
+                status.textContent = `Your pack can have at most ${MAX_PACK_COOKIES} cookies.`;
+                addButton.disabled = true;
+            } else {
+                status.textContent = "Your gift pack is ready to add to cart.";
+                addButton.disabled = false;
+            }
+
+            document.querySelectorAll("button[data-action='increase']").forEach((button) => {
+                button.disabled = totalCount >= MAX_PACK_COOKIES;
+            });
+        }
+
+        // Update the selected quantity for a cookie option and re-render the summary
+        function updateSelection(cookieId, delta) {
+            const current = selections[cookieId];
+            const next = Math.max(0, current + delta);
+            const totalWithoutCurrent = getSelectedCookieCount() - current;
+
+            if (next + totalWithoutCurrent > MAX_PACK_COOKIES) {
+                return;
+            }
+
+            selections[cookieId] = next;
+            const qtyElement = document.getElementById(`qty-${cookieId}`);
+            qtyElement.textContent = String(next);
+            renderGiftPackSummary();
+        }
+
+        // Add the selected gift pack to the cart
+        function addGiftPackToCart() {
+            if (!ensureLoggedInForCart()) {
+                return;
+            }
+
+            const totalCount = getSelectedCookieCount();
+            if (totalCount < MIN_PACK_COOKIES || totalCount > MAX_PACK_COOKIES) {
+                return;
+            }
+
+            const breakdownParts = COOKIE_OPTIONS
+                .filter((cookie) => selections[cookie.id] > 0)
+                .map((cookie) => `${cookie.name} x${selections[cookie.id]}`);
+            const packProfile = COOKIE_OPTIONS.map((cookie) => `${cookie.id}:${selections[cookie.id]}`).join("|");
+            const packItem = {
+                id: `gift-pack-${packProfile}`,
+                name: `Custom Gift Pack (${totalCount} cookies) - ${breakdownParts.join(", ")}`,
+                price: getSelectedCookiePrice(),
+                qty: 1,
+            };
+
+            const cart = readCart();
+            const existing = cart.find((item) => item.id === packItem.id);
+
+            if (existing) {
+                existing.qty += 1;
+            } else {
+                cart.push(packItem);
+            }
+
+            saveCart(cart);
+            refreshCartLabel();
+
+            document.getElementById("gift-pack-status").textContent = "Gift pack added to cart.";
+        }
+
+        document.getElementById("gift-pack-options").addEventListener("click", (event) => {
+            const button = event.target.closest("button");
+            if (!button) {
+                return;
+            }
+
+            const action = button.dataset.action;
+            const cookieId = button.dataset.id;
+
+            if (action === "increase") {
+                updateSelection(cookieId, 1);
+            } else if (action === "decrease") {
+                updateSelection(cookieId, -1);
+            }
+        });
+
+        document.getElementById("add-gift-pack-btn").addEventListener("click", addGiftPackToCart);
+
+        initializeCateringDatePicker();
+        renderGiftPackOptions();
+        renderGiftPackSummary();
+        refreshCartLabel();
+    </script>
+</body>
+
+</html>

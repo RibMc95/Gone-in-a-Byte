@@ -1,0 +1,8 @@
+window.GoneInABiteeConfig = {
+    apiBaseUrl: "${API_BASE_URL}",
+    squareAppId: "${SQUARE_APP_ID}",
+    squareLocationId: "${SQUARE_LOCATION_ID}",
+    squareEnvironment: "${SQUARE_ENVIRONMENT}",
+    squareSdkUrl: "${SQUARE_SDK_URL}",
+    afterpayScriptUrl: "${AFTERPAY_SCRIPT_URL}"
+};
