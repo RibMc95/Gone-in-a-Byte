@@ -83,4 +83,4 @@ Autonomous Database for persistence. The whole stack runs in Docker.
 
 ---
 
-*Built by Micah Cole. This is a personal portfolio project and a work in progress.*
+*Built by Micah Cole. This is the business website that will be deloyed soon.*
