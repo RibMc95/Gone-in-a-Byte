@@ -104,7 +104,7 @@ function getApplePayApi(client) {
     return client.applePayApi || client.applePay;
 }
 
-function createPaymentRouter({ findOrder, canAccessOrder, addHistory, saveOrder }) {
+function createPaymentRouter({ findOrder, canAccessOrder, addHistory, saveOrder, saveOrderWithHistory, claimOrderForPayment }) {
     const router = express.Router();
 
     function requireSquareConfig(res) {
@@ -191,8 +191,7 @@ function createPaymentRouter({ findOrder, canAccessOrder, addHistory, saveOrder 
         order.paymentStatus = "paid";
         order.status = "paid";
         order.updatedAt = new Date().toISOString();
-        await saveOrder(order);
-        await addHistory(order.id, "cashapp_capture", req.userId, {
+        await saveOrderWithHistory(order, "cashapp_capture", req.userId, {
             token: String((req.body && req.body.token) || ""),
             demo: true,
         });
@@ -237,11 +236,41 @@ function createPaymentRouter({ findOrder, canAccessOrder, addHistory, saveOrder 
             return res.status(503).json({ error: "SQUARE_LOCATION_ID is not set on the backend." });
         }
 
+        // Atomically claim the order so two concurrent requests (double-click,
+        // two tabs, a retry) can't both charge the card. Done after the cheap
+        // validations above so we don't mark an order "processing" and then
+        // reject it for bad input. A rejected claim means someone else already
+        // paid or is mid-payment.
+        const claim = await claimOrderForPayment(order.id);
+        if (claim.status === "not_found") {
+            return res.status(404).json({ error: "Order not found" });
+        }
+        if (claim.status === "already_paid") {
+            return res.status(409).json({ error: "Order already paid" });
+        }
+        if (claim.status === "in_progress") {
+            return res.status(409).json({ error: "A payment for this order is already being processed." });
+        }
+        const workingOrder = claim.order;
+
+        // If anything below fails, release the claim (back to "pending") so the
+        // customer can try again (e.g. after a card decline).
+        async function releaseClaim() {
+            try {
+                workingOrder.paymentStatus = "pending";
+                workingOrder.updatedAt = new Date().toISOString();
+                await saveOrder(workingOrder);
+            } catch (revertErr) {
+                console.error("Failed to release payment claim for order", workingOrder.id, revertErr);
+            }
+        }
+
         const idempotencyKey = (req.body && req.body.idempotencyKey) || createIdempotencyKey();
 
         try {
             const paymentsApi = getPaymentsApi(client);
             if (!paymentsApi) {
+                await releaseClaim();
                 return res.status(503).json({ error: "Payments API is unavailable in this Square SDK version." });
             }
 
@@ -254,8 +283,8 @@ function createPaymentRouter({ findOrder, canAccessOrder, addHistory, saveOrder 
                     buyerEmailAddress: req.body && req.body.buyerEmailAddress,
                     verificationToken: verificationToken || undefined,
                     autocomplete: true,
-                    note: `Order ${order.id}`,
-                    referenceId: order.id,
+                    note: `Order ${workingOrder.id}`,
+                    referenceId: workingOrder.id,
                 })
                 : await paymentsApi.create({
                     sourceId,
@@ -265,21 +294,21 @@ function createPaymentRouter({ findOrder, canAccessOrder, addHistory, saveOrder 
                     buyerEmailAddress: req.body && req.body.buyerEmailAddress,
                     verificationToken: verificationToken || undefined,
                     autocomplete: true,
-                    note: `Order ${order.id}`,
-                    referenceId: order.id,
+                    note: `Order ${workingOrder.id}`,
+                    referenceId: workingOrder.id,
                 });
 
             const payload = getSquarePayload(result) || {};
             const payment = payload.payment;
             if (!payment) {
+                await releaseClaim();
                 return res.status(502).json({ error: "Square did not return a payment object" });
             }
 
-            order.paymentStatus = "paid";
-            order.status = "paid";
-            order.updatedAt = new Date().toISOString();
-            await saveOrder(order);
-            await addHistory(order.id, "square_card_payment", req.userId, {
+            workingOrder.paymentStatus = "paid";
+            workingOrder.status = "paid";
+            workingOrder.updatedAt = new Date().toISOString();
+            await saveOrderWithHistory(workingOrder, "square_card_payment", req.userId, {
                 squarePaymentId: payment.id,
                 amount: amountMoney.amount,
                 currency: amountMoney.currency,
@@ -287,14 +316,15 @@ function createPaymentRouter({ findOrder, canAccessOrder, addHistory, saveOrder 
 
             return res.status(201).json({
                 ok: true,
-                orderId: order.id,
-                paymentStatus: order.paymentStatus,
+                orderId: workingOrder.id,
+                paymentStatus: workingOrder.paymentStatus,
                 squarePaymentId: payment.id,
                 receiptUrl: payment.receiptUrl,
                 cardBrand: payment.cardDetails && payment.cardDetails.card && payment.cardDetails.card.cardBrand,
                 last4: payment.cardDetails && payment.cardDetails.card && payment.cardDetails.card.last4,
             });
         } catch (squareError) {
+            await releaseClaim();
             return res.status(502).json({ error: normalizeSquareError(squareError) });
         }
     });

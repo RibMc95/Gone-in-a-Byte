@@ -5,8 +5,11 @@ RUN apk add --no-cache gettext
 COPY . /usr/share/nginx/html
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 
-# Keep root URL working even though the main page file has a space in its name
+# Keep root URL working even though the main page file has a space in its name,
+# and move the nginx config template out of the web root so it isn't served.
 RUN cp "/usr/share/nginx/html/main page.html" /usr/share/nginx/html/index.html && \
+    mkdir -p /etc/nginx/templates && \
+    mv /usr/share/nginx/html/default.conf.template /etc/nginx/templates/default.conf.template && \
     chmod +x /docker-entrypoint.sh
 
 ENTRYPOINT ["/docker-entrypoint.sh"]

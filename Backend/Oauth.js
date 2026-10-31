@@ -30,6 +30,18 @@ function getSquareClient() {
     }
 }
 
+// Mask a secret value for logging, showing only the last 4 characters and length.
+function maskSecret(value) {
+    const str = typeof value === "string" ? value : "";
+    if (str.length === 0) {
+        return "(none)";
+    }
+    if (str.length <= 4) {
+        return "****";
+    }
+    return `****${str.slice(-4)} (len ${str.length})`;
+}
+
 function normalizeSquareError(error) {
     const fromSdk = error && error.result && error.result.errors;
     if (Array.isArray(fromSdk) && fromSdk.length > 0) {
@@ -182,13 +194,24 @@ function createOauthRouter() {
 
             const token = result && result.result ? result.result : result;
 
-            // Log the tokens server-side only — never send them to the browser.
+            // Never log full tokens by default — a leaked log line is a permanent
+            // key to the merchant's Square account. Mask to the last 4 chars.
+            // For local debugging only, set OAUTH_DEBUG_LOG_TOKENS=true to print
+            // the full values (never enable this in production).
             console.log("=== Square OAuth: Merchant Connected ===");
             console.log("Merchant ID  :", token.merchantId);
-            console.log("Access Token :", token.accessToken);
-            console.log("Refresh Token:", token.refreshToken);
+            console.log("Access Token :", maskSecret(token.accessToken));
+            console.log("Refresh Token:", maskSecret(token.refreshToken));
             console.log("Expires At   :", token.expiresAt);
+            if (process.env.OAUTH_DEBUG_LOG_TOKENS === "true") {
+                console.warn("WARNING: OAUTH_DEBUG_LOG_TOKENS is on — logging full tokens (dev only).");
+                console.warn("Access Token (full) :", token.accessToken);
+                console.warn("Refresh Token (full):", token.refreshToken);
+            }
             console.log("========================================");
+
+            // TODO (before launch): persist the tokens encrypted in the DB instead
+            // of relying on logs. See docs/security-checklist.md.
 
             return res.redirect(
                 `/oauth-result.html?status=success&merchant=${encodeURIComponent(token.merchantId || "")}`

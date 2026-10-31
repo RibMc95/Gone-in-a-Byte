@@ -1,0 +1,27 @@
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Custom error pages
+    error_page 404 /404.html;
+    error_page 500 502 504 /50x.html;
+    error_page 503 /maintenance.html;
+
+    # Serve the error/maintenance pages. Exact-match locations are chosen over
+    # "location /" during the internal error_page redirect, so the maintenance
+    # gate below does not re-trigger on them (no redirect loop).
+    location = /404.html { }
+    location = /50x.html { }
+    location = /maintenance.html { }
+
+    location / {
+        # MAINTENANCE_MODE is substituted at container start (on | off).
+        set $maintenance ${MAINTENANCE_MODE};
+        if ($maintenance = "on") {
+            return 503;
+        }
+        try_files $uri $uri/ =404;
+    }
+}

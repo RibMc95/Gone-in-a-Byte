@@ -10,6 +10,7 @@ Headers used as a lightweight auth simulation:
 - x-user-id: any string (example: user-123)
 */
 
+// Load environment variables from .env file if present
 const express = require("express");
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
@@ -140,20 +141,26 @@ function normalizeSquareError(error) {
 }
 
 // Utility functions
+// IDs use a UUID so two records created in the same millisecond can't collide
+// (and silently overwrite each other via MERGE).
 function createOrderId() {
-    return `ord_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+    return `ord_${crypto.randomUUID()}`;
 }
 
-async function addHistory(orderId, action, actor, details, userId = actor) {
-    await storage.addHistoryEntry({
-        historyId: `hist_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+function buildHistoryEntry(orderId, action, actor, details, userId = actor) {
+    return {
+        historyId: `hist_${crypto.randomUUID()}`,
         orderId,
         action,
         actor,
         userId,
         details,
         timestamp: new Date().toISOString(),
-    });
+    };
+}
+
+async function addHistory(orderId, action, actor, details, userId = actor) {
+    await storage.addHistoryEntry(buildHistoryEntry(orderId, action, actor, details, userId));
 }
 
 // Verify the JWT issued at login and derive the user from it.
@@ -187,6 +194,15 @@ async function findOrder(orderId) {
 
 async function saveOrder(order) {
     return storage.putOrder(order);
+}
+
+// Save an order and record a history entry atomically (single transaction).
+async function saveOrderWithHistory(order, action, actor, details, userId = actor) {
+    await storage.putOrderWithHistory(
+        order,
+        buildHistoryEntry(order.id, action, actor, details, userId)
+    );
+    return order;
 }
 
 // Check if the user can access the order (owner only)
@@ -324,8 +340,10 @@ app.post("/orders", async (req, res) => {
         updatedAt: new Date().toISOString(),
     };
 
-    await saveOrder(order);
-    await addHistory(order.id, "create", req.userId, { total: order.total, items: order.items.length });
+    await storage.putOrderWithHistory(
+        order,
+        buildHistoryEntry(order.id, "create", req.userId, { total: order.total, items: order.items.length })
+    );
 
     res.status(201).json(order);
 });
@@ -396,10 +414,12 @@ app.post("/orders/:id/square/sync", async (req, res) => {
 
         order.squareOrderId = squareOrder.id;
         order.updatedAt = new Date().toISOString();
-        await saveOrder(order);
-        await addHistory(order.id, "square_order_sync", req.userId, {
-            squareOrderId: squareOrder.id,
-        });
+        await storage.putOrderWithHistory(
+            order,
+            buildHistoryEntry(order.id, "square_order_sync", req.userId, {
+                squareOrderId: squareOrder.id,
+            })
+        );
 
         return res.status(201).json({
             ok: true,
@@ -714,8 +734,10 @@ app.patch("/orders/:id", async (req, res) => {
     order.total = calculateOrderTotal(order.items);
 
     order.updatedAt = new Date().toISOString();
-    await saveOrder(order);
-    await addHistory(order.id, "update", req.userId, { changes: Object.keys(req.body) });
+    await storage.putOrderWithHistory(
+        order,
+        buildHistoryEntry(order.id, "update", req.userId, { changes: Object.keys(req.body) })
+    );
 
     res.json(order);
 });
@@ -731,14 +753,23 @@ app.delete("/orders/:id", async (req, res) => {
         return res.status(403).json({ error: "You can only delete your own order" });
     }
 
-    await storage.deleteOrder(order.id);
-    await addHistory(order.id, "delete", req.userId, {});
+    await storage.deleteOrderWithHistory(
+        order.id,
+        buildHistoryEntry(order.id, "delete", req.userId, {})
+    );
 
     res.json({ message: "Order deleted", id: order.id });
 });
 
 // Mount payment routes (Cash App Pay + payment options)
-app.use(createPaymentRouter({ findOrder, canAccessOrder, addHistory, saveOrder }));
+app.use(createPaymentRouter({
+    findOrder,
+    canAccessOrder,
+    addHistory,
+    saveOrder,
+    saveOrderWithHistory,
+    claimOrderForPayment: storage.claimOrderForPayment,
+}));
 app.use(createRefundRouter());
 app.use(createCardsRouter());
 app.use(createDisputesRouter());
@@ -752,6 +783,19 @@ app.use(createPayoutRouter());
 app.use(createCustomerRouter());
 app.use(createOrderCustomAttributesRouter());
 app.use(createUserLoginRouter());
+
+// 404 for any unmatched API route.
+app.use((req, res) => {
+    res.status(404).json({ error: "Not found" });
+});
+
+// Global error handler — catches unhandled errors from any route so the
+// process stays up and no stack trace leaks to the client.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+    console.error("Unhandled backend error:", err);
+    res.status(500).json({ error: "Internal server error" });
+});
 
 async function start() {
     try {

@@ -5,6 +5,10 @@ oracledb.fetchAsString = [oracledb.CLOB];
 const DEFAULT_ORDERS_TABLE = process.env.ORACLE_ORDERS_TABLE || "ORDERS";
 const DEFAULT_HISTORY_TABLE = process.env.ORACLE_HISTORY_TABLE || "ORDER_HISTORY";
 
+// How long an order may sit in "processing" before it's considered stale and
+// reclaimable (e.g. the server crashed mid-charge). Default 5 minutes.
+const PROCESSING_TIMEOUT_MS = Number(process.env.PAYMENT_PROCESSING_TIMEOUT_MS) || 5 * 60 * 1000;
+
 let poolPromise;
 
 function getRequiredEnv(name) {
@@ -145,12 +149,14 @@ function createOracleStorage() {
         await Promise.all([ensureOrdersSchema, ensureHistorySchema]);
     }
 
-    async function putOrder(order) {
-        const payload = toJson(order);
+    // --- Connection-level statement helpers (no commit) ---
+    // These run a single statement on a caller-supplied connection WITHOUT
+    // committing, so they can be composed into one atomic transaction.
+    // The public methods below wrap them and commit once.
 
-        await withConnection(async (connection) => {
-            await connection.execute(
-                `MERGE INTO ${DEFAULT_ORDERS_TABLE} target
+    async function mergeOrderStmt(connection, order) {
+        await connection.execute(
+            `MERGE INTO ${DEFAULT_ORDERS_TABLE} target
                  USING (
                      SELECT
                          :id AS id,
@@ -179,18 +185,120 @@ function createOracleStorage() {
                      incoming.updated_at,
                      incoming.order_json
                  )`,
-                {
-                    id: safeString(order && order.id),
-                    userId: safeString(order && order.userId),
-                    createdAt: safeString(order && order.createdAt),
-                    updatedAt: safeString(order && order.updatedAt),
-                    orderJson: payload,
-                },
-                { autoCommit: true }
-            );
+            {
+                id: safeString(order && order.id),
+                userId: safeString(order && order.userId),
+                createdAt: safeString(order && order.createdAt),
+                updatedAt: safeString(order && order.updatedAt),
+                orderJson: toJson(order),
+            }
+        );
+    }
+
+    async function deleteOrderStmt(connection, orderId) {
+        await connection.execute(
+            `DELETE FROM ${DEFAULT_ORDERS_TABLE}
+                 WHERE ID = :id`,
+            { id: safeString(orderId) }
+        );
+    }
+
+    async function insertHistoryStmt(connection, entry) {
+        await connection.execute(
+            `INSERT INTO ${DEFAULT_HISTORY_TABLE} (
+                    HISTORY_ID,
+                    USER_ID,
+                    EVENT_TS,
+                    ENTRY_JSON
+                 ) VALUES (
+                    :historyId,
+                    :userId,
+                    :eventTs,
+                    :entryJson
+                 )`,
+            {
+                historyId: safeString(entry && entry.historyId),
+                userId: safeString(entry && entry.userId),
+                eventTs: safeString(entry && entry.timestamp),
+                entryJson: toJson(entry),
+            }
+        );
+    }
+
+    async function putOrder(order) {
+        await withConnection(async (connection) => {
+            await mergeOrderStmt(connection, order);
+            await connection.commit();
         });
 
         return order;
+    }
+
+    // Save an order AND record a history entry in a SINGLE transaction.
+    // Either both commit or neither does — no partial state where the order
+    // exists without its history row (or vice versa).
+    async function putOrderWithHistory(order, historyEntry) {
+        await withConnection(async (connection) => {
+            await mergeOrderStmt(connection, order);
+            await insertHistoryStmt(connection, historyEntry);
+            await connection.commit();
+        });
+
+        return order;
+    }
+
+    // Atomically claim an order for payment so two concurrent payment requests
+    // can't both charge the same card. Locks the order row (SELECT ... FOR
+    // UPDATE), re-reads the status, and — only if it's still "pending" — marks
+    // it "processing" and commits (releasing the lock before the slow Square
+    // call). A concurrent request blocks on the lock, then sees "processing"
+    // or "paid" and is turned away.
+    // Returns: { status: "claimed" | "already_paid" | "in_progress" | "not_found", order }
+    async function claimOrderForPayment(orderId) {
+        return withConnection(async (connection) => {
+            const result = await connection.execute(
+                `SELECT ORDER_JSON
+                 FROM ${DEFAULT_ORDERS_TABLE}
+                 WHERE ID = :id
+                 FOR UPDATE`,
+                { id: safeString(orderId) },
+                { outFormat: oracledb.OUT_FORMAT_OBJECT }
+            );
+
+            if (!result.rows || result.rows.length === 0) {
+                await connection.commit();
+                return { status: "not_found" };
+            }
+
+            const order = parseJson(result.rows[0].ORDER_JSON);
+            if (!order) {
+                await connection.commit();
+                return { status: "not_found" };
+            }
+
+            if (order.paymentStatus === "paid") {
+                await connection.commit();
+                return { status: "already_paid", order };
+            }
+
+            if (order.paymentStatus === "processing") {
+                // Reclaim if the previous attempt has been stuck past the
+                // timeout (e.g. the server crashed mid-charge); otherwise treat
+                // it as a genuine in-flight payment and turn this request away.
+                const since = Date.parse(order.updatedAt || "");
+                const isStale = Number.isFinite(since) && Date.now() - since > PROCESSING_TIMEOUT_MS;
+                if (!isStale) {
+                    await connection.commit();
+                    return { status: "in_progress", order };
+                }
+            }
+
+            order.paymentStatus = "processing";
+            order.updatedAt = new Date().toISOString();
+            await mergeOrderStmt(connection, order);
+            await connection.commit();
+            return { status: "claimed", order };
+        });
     }
 
     async function getOrder(orderId) {
@@ -234,37 +342,24 @@ function createOracleStorage() {
 
     async function deleteOrder(orderId) {
         await withConnection(async (connection) => {
-            await connection.execute(
-                `DELETE FROM ${DEFAULT_ORDERS_TABLE}
-                 WHERE ID = :id`,
-                { id: safeString(orderId) },
-                { autoCommit: true }
-            );
+            await deleteOrderStmt(connection, orderId);
+            await connection.commit();
+        });
+    }
+
+    // Delete an order AND record a history entry in a SINGLE transaction.
+    async function deleteOrderWithHistory(orderId, historyEntry) {
+        await withConnection(async (connection) => {
+            await deleteOrderStmt(connection, orderId);
+            await insertHistoryStmt(connection, historyEntry);
+            await connection.commit();
         });
     }
 
     async function addHistoryEntry(entry) {
         await withConnection(async (connection) => {
-            await connection.execute(
-                `INSERT INTO ${DEFAULT_HISTORY_TABLE} (
-                    HISTORY_ID,
-                    USER_ID,
-                    EVENT_TS,
-                    ENTRY_JSON
-                 ) VALUES (
-                    :historyId,
-                    :userId,
-                    :eventTs,
-                    :entryJson
-                 )`,
-                {
-                    historyId: safeString(entry && entry.historyId),
-                    userId: safeString(entry && entry.userId),
-                    eventTs: safeString(entry && entry.timestamp),
-                    entryJson: toJson(entry),
-                },
-                { autoCommit: true }
-            );
+            await insertHistoryStmt(connection, entry);
+            await connection.commit();
         });
 
         return entry;
@@ -294,9 +389,12 @@ function createOracleStorage() {
     return {
         init,
         putOrder,
+        putOrderWithHistory,
+        claimOrderForPayment,
         getOrder,
         listOrdersByUser,
         deleteOrder,
+        deleteOrderWithHistory,
         addHistoryEntry,
         listHistoryForUser,
         close: closePool,
