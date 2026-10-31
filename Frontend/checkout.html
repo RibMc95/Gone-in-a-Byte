@@ -217,6 +217,19 @@
                 return;
             }
 
+            const fulfillmentMethod = (document.getElementById("fulfillment-method") || {}).value || "";
+            const fulfillmentTime = (document.getElementById("fulfillment-time") || {}).value || "";
+            const deliveryAddress = ((document.getElementById("delivery-address") || {}).value || "").trim();
+
+            if (!fulfillmentTime) {
+                alert("Please choose a date and time for your order.");
+                return;
+            }
+            if (fulfillmentMethod === "delivery" && !deliveryAddress) {
+                alert("Please enter a delivery address.");
+                return;
+            }
+
             const button = document.getElementById("square-card-btn");
             button.disabled = true;
             button.textContent = "Processing Card...";
@@ -240,11 +253,15 @@
                             price: item.price,
                             qty: item.qty,
                         })),
+                        fulfillmentMethod,
+                        fulfillmentTime,
+                        deliveryAddress,
                     }),
                 });
 
                 if (!orderRes.ok) {
-                    throw new Error("Could not create order before card payment.");
+                    const errBody = await orderRes.json().catch(() => ({}));
+                    throw new Error(errBody.error || "Could not create order before card payment.");
                 }
 
                 const order = await orderRes.json();
@@ -350,10 +367,34 @@
             }
         });
 
+        // Show the address field only for delivery, and stop past times being
+        // picked (the backend also enforces a minimum lead time for baking).
+        function initFulfillment() {
+            const methodEl = document.getElementById("fulfillment-method");
+            const addressField = document.getElementById("delivery-address-field");
+            const timeEl = document.getElementById("fulfillment-time");
+
+            if (methodEl && addressField) {
+                const sync = () => {
+                    addressField.hidden = methodEl.value !== "delivery";
+                };
+                methodEl.addEventListener("change", sync);
+                sync();
+            }
+
+            if (timeEl) {
+                const now = new Date();
+                now.setSeconds(0, 0);
+                const pad = (n) => String(n).padStart(2, "0");
+                timeEl.min = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+            }
+        }
+
         document.getElementById("clear-cart-btn").addEventListener("click", clearCart);
         document.getElementById("square-card-btn").addEventListener("click", showSquareCardPayment);
 
         initSquareCard();
+        initFulfillment();
         renderCart();
     </script>
 </body>

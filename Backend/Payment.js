@@ -189,7 +189,6 @@ function createPaymentRouter({ findOrder, canAccessOrder, addHistory, saveOrder,
         }
 
         order.paymentStatus = "paid";
-        order.status = "paid";
         order.updatedAt = new Date().toISOString();
         await saveOrderWithHistory(order, "cashapp_capture", req.userId, {
             token: String((req.body && req.body.token) || ""),
@@ -306,7 +305,6 @@ function createPaymentRouter({ findOrder, canAccessOrder, addHistory, saveOrder,
             }
 
             workingOrder.paymentStatus = "paid";
-            workingOrder.status = "paid";
             workingOrder.updatedAt = new Date().toISOString();
             await saveOrderWithHistory(workingOrder, "square_card_payment", req.userId, {
                 squarePaymentId: payment.id,

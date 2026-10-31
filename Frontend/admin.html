@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kitchen Queue | Gone in a Bitee</title>
+    <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+    <main class="page-content">
+        <h2 class="limelight-regular page-title">Kitchen Queue</h2>
+        <p id="admin-status" class="checkout-note"></p>
+        <div id="admin-orders" class="admin-orders"></div>
+    </main>
+
+    <script src="config.js"></script>
+    <script src="site.js"></script>
+    <script>
+        (function () {
+            const config = window.GoneInABiteeConfig || {};
+            const API_BASE = config.apiBaseUrl || "http://localhost:3001";
+
+            const statusEl = document.getElementById("admin-status");
+            const listEl = document.getElementById("admin-orders");
+
+            // Mirror of the backend's legal transitions, used to render the
+            // right action buttons. The backend is still the source of truth and
+            // re-validates every change.
+            const TRANSITIONS = {
+                scheduled: ["baking", "cancelled"],
+                baking: ["ready", "cancelled"],
+                ready: ["fulfilled", "cancelled"],
+                fulfilled: [],
+                cancelled: [],
+            };
+            const LABELS = {
+                baking: "Start baking",
+                ready: "Mark ready",
+                fulfilled: "Mark fulfilled",
+                cancelled: "Cancel",
+            };
+
+            function getToken() {
+                return window.GoneInABiteeSite && window.GoneInABiteeSite.getAuthToken
+                    ? window.GoneInABiteeSite.getAuthToken()
+                    : "";
+            }
+
+            function escapeHtml(value) {
+                return String(value == null ? "" : value).replace(/[&<>"']/g, (ch) => ({
+                    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+                }[ch]));
+            }
+
+            function formatWhen(iso) {
+                const t = Date.parse(iso || "");
+                return Number.isFinite(t) ? new Date(t).toLocaleString() : "—";
+            }
+
+            function itemsSummary(items) {
+                if (!Array.isArray(items) || items.length === 0) return "—";
+                return items.map((i) => `${i.qty}× ${i.name}`).join(", ");
+            }
+
+            function renderOrders(orders) {
+                if (!orders.length) {
+                    listEl.innerHTML = "";
+                    statusEl.textContent = "No orders yet.";
+                    return;
+                }
+
+                statusEl.textContent = `${orders.length} order(s), newest first.`;
+                listEl.innerHTML = orders.map((o) => {
+                    const current = o.fulfillmentStatus || "scheduled";
+                    const buttons = (TRANSITIONS[current] || []).map((target) =>
+                        `<button type="button" class="buy-button" data-id="${escapeHtml(o.id)}" data-target="${target}">${LABELS[target] || target}</button>`
+                    ).join(" ");
+                    const where = o.fulfillmentMethod === "delivery"
+                        ? `Delivery → ${escapeHtml(o.deliveryAddress || "")}`
+                        : "Pickup";
+
+                    return `
+                        <article class="admin-order checkout-card">
+                            <p><strong>${escapeHtml(o.userId)}</strong> — ${escapeHtml(itemsSummary(o.items))}</p>
+                            <p>Total: $${Number(o.total || 0).toFixed(2)} · ${escapeHtml(where)}</p>
+                            <p>Ready for: ${escapeHtml(formatWhen(o.fulfillmentTime))}</p>
+                            <p>Fulfillment: <strong>${escapeHtml(current)}</strong> · Payment: ${escapeHtml(o.paymentStatus || "—")}</p>
+                            <div class="checkout-actions">${buttons || "<em>Done.</em>"}</div>
+                        </article>
+                    `;
+                }).join("");
+            }
+
+            async function loadOrders() {
+                const token = getToken();
+                if (!token) {
+                    statusEl.innerHTML = 'Please <a href="login.html">log in</a> with an admin account first.';
+                    return;
+                }
+
+                try {
+                    const res = await fetch(`${API_BASE}/admin/orders`, {
+                        headers: { "Authorization": `Bearer ${token}` },
+                    });
+                    if (res.status === 403) {
+                        statusEl.textContent = "This account is not an admin.";
+                        listEl.innerHTML = "";
+                        return;
+                    }
+                    if (!res.ok) {
+                        throw new Error(`Request failed (${res.status})`);
+                    }
+                    renderOrders(await res.json());
+                } catch (error) {
+                    statusEl.textContent = `Could not load orders: ${error.message}`;
+                }
+            }
+
+            async function changeStatus(orderId, target) {
+                const token = getToken();
+                try {
+                    const res = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+                        method: "PATCH",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "Authorization": `Bearer ${token}`,
+                        },
+                        body: JSON.stringify({ fulfillmentStatus: target }),
+                    });
+                    const body = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                        throw new Error(body.error || `Request failed (${res.status})`);
+                    }
+                    loadOrders();
+                } catch (error) {
+                    statusEl.textContent = `Update failed: ${error.message}`;
+                }
+            }
+
+            listEl.addEventListener("click", (event) => {
+                const button = event.target.closest("button[data-target]");
+                if (!button) return;
+                if (button.dataset.target === "cancelled" &&
+                    !window.confirm("Cancel this order?")) {
+                    return;
+                }
+                changeStatus(button.dataset.id, button.dataset.target);
+            });
+
+            loadOrders();
+        }());
+    </script>
+</body>
+
+</html>

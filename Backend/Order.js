@@ -187,6 +187,33 @@ function auth(req, res, next) {
     }
 }
 
+// Admin allowlist: comma-separated emails in ADMIN_EMAILS may run the kitchen
+// (advance order fulfillment). Config-based because users are in-memory with no
+// roles yet; when the DB-backed user store lands (scaling-roadmap.md #1), this
+// should become a real role on the user record.
+const adminEmails = (process.env.ADMIN_EMAILS || "")
+    .split(",")
+    .map((email) => email.trim().toLowerCase())
+    .filter((email) => email.length > 0);
+
+// Runs AFTER auth (so req.userId is set): only allowlisted emails pass.
+function requireAdmin(req, res, next) {
+    if (!req.userId || !adminEmails.includes(String(req.userId).toLowerCase())) {
+        return res.status(403).json({ error: "Admin access required." });
+    }
+    return next();
+}
+
+// Legal fulfillment transitions. A baker advances one step forward, or cancels
+// any order that isn't already finished. Terminal states go nowhere.
+const FULFILLMENT_TRANSITIONS = {
+    scheduled: ["baking", "cancelled"],
+    baking: ["ready", "cancelled"],
+    ready: ["fulfilled", "cancelled"],
+    fulfilled: [],
+    cancelled: [],
+};
+
 // Helper functions
 async function findOrder(orderId) {
     return storage.getOrder(orderId);
@@ -267,6 +294,47 @@ function calculateOrderTotal(items) {
     return items.reduce((sum, item) => sum + item.price * item.qty, 0);
 }
 
+// --- Fulfillment: cookies are baked to order, then picked up or delivered ---
+
+// Minimum time between placing an order and the requested fulfillment time, so
+// there's room to bake fresh. Same-day is allowed (3h lead by default); tune
+// with MIN_FULFILLMENT_LEAD_HOURS.
+const MIN_FULFILLMENT_LEAD_MS =
+    (Number(process.env.MIN_FULFILLMENT_LEAD_HOURS) || 3) * 60 * 60 * 1000;
+
+const FULFILLMENT_METHODS = ["pickup", "delivery"];
+
+// Validate the fulfillment fields on an order. Returns an error string, or
+// null when valid; on success writes the normalized values onto `out`.
+function validateFulfillment(body, out) {
+    const method = String((body && body.fulfillmentMethod) || "").trim().toLowerCase();
+    if (!FULFILLMENT_METHODS.includes(method)) {
+        return 'fulfillmentMethod is required and must be "pickup" or "delivery"';
+    }
+
+    const when = Date.parse((body && body.fulfillmentTime) || "");
+    if (!Number.isFinite(when)) {
+        return "fulfillmentTime is required and must be a valid date/time";
+    }
+    if (when < Date.now() + MIN_FULFILLMENT_LEAD_MS) {
+        const hours = MIN_FULFILLMENT_LEAD_MS / (60 * 60 * 1000);
+        return `fulfillmentTime must be at least ${hours} hour(s) from now (cookies are baked fresh)`;
+    }
+
+    let deliveryAddress = "";
+    if (method === "delivery") {
+        deliveryAddress = String((body && body.deliveryAddress) || "").trim();
+        if (deliveryAddress.length === 0) {
+            return "deliveryAddress is required for delivery orders";
+        }
+    }
+
+    out.fulfillmentMethod = method;
+    out.fulfillmentTime = new Date(when).toISOString();
+    out.deliveryAddress = deliveryAddress;
+    return null;
+}
+
 function toSquareMoneyAmount(dollars) {
     const amount = Number(dollars);
     if (!Number.isFinite(amount) || amount < 0) {
@@ -325,6 +393,12 @@ app.post("/orders", async (req, res) => {
         return res.status(400).json({ error: validationError });
     }
 
+    const fulfillment = {};
+    const fulfillmentError = validateFulfillment(req.body, fulfillment);
+    if (fulfillmentError) {
+        return res.status(400).json({ error: fulfillmentError });
+    }
+
     const normalizedItems = normalizeItems(items);
     const total = calculateOrderTotal(normalizedItems);
 
@@ -334,7 +408,10 @@ app.post("/orders", async (req, res) => {
         items: normalizedItems,
         total,
         note,
-        status: "created",
+        fulfillmentMethod: fulfillment.fulfillmentMethod,
+        fulfillmentTime: fulfillment.fulfillmentTime,
+        deliveryAddress: fulfillment.deliveryAddress,
+        fulfillmentStatus: "scheduled",
         paymentStatus: "pending",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -720,7 +797,7 @@ app.patch("/orders/:id", async (req, res) => {
         return res.status(403).json({ error: "You can only update your own order" });
     }
 
-    const allowedFields = ["items", "total", "note", "status", "paymentStatus"];
+    const allowedFields = ["items", "total", "note", "paymentStatus"];
     for (const field of allowedFields) {
         if (field in req.body) {
             if (field === "items") {
@@ -729,6 +806,30 @@ app.patch("/orders/:id", async (req, res) => {
                 order[field] = req.body[field];
             }
         }
+    }
+
+    // Customers may change how/when their order is fulfilled (re-validated as a
+    // set, since the address requirement depends on the method). The kitchen
+    // lifecycle (fulfillmentStatus) is intentionally NOT editable here — that's
+    // a baker/admin action and needs an admin path (see notes).
+    const changingFulfillment =
+        "fulfillmentMethod" in req.body ||
+        "fulfillmentTime" in req.body ||
+        "deliveryAddress" in req.body;
+    if (changingFulfillment) {
+        const merged = {
+            fulfillmentMethod: req.body.fulfillmentMethod ?? order.fulfillmentMethod,
+            fulfillmentTime: req.body.fulfillmentTime ?? order.fulfillmentTime,
+            deliveryAddress: req.body.deliveryAddress ?? order.deliveryAddress,
+        };
+        const out = {};
+        const err = validateFulfillment(merged, out);
+        if (err) {
+            return res.status(400).json({ error: err });
+        }
+        order.fulfillmentMethod = out.fulfillmentMethod;
+        order.fulfillmentTime = out.fulfillmentTime;
+        order.deliveryAddress = out.deliveryAddress;
     }
 
     order.total = calculateOrderTotal(order.items);
@@ -759,6 +860,65 @@ app.delete("/orders/:id", async (req, res) => {
     );
 
     res.json({ message: "Order deleted", id: order.id });
+});
+
+// --- Admin / kitchen routes (allowlisted emails only) ---
+// Require a valid login AND admin allowlist membership on everything under
+// /admin. Scoped like the /orders guard above.
+app.use("/admin", auth, requireAdmin);
+
+// Is the database reachable right now? (Admin-only so DB status/timing isn't
+// exposed on the public /health endpoint.)
+app.get("/admin/db-health", async (req, res) => {
+    try {
+        await storage.ping();
+        res.json({ ok: true, db: "connected" });
+    } catch (err) {
+        res.status(503).json({ ok: false, db: "unavailable", error: err.message });
+    }
+});
+
+// The whole order queue across all users, newest first.
+app.get("/admin/orders", async (req, res) => {
+    const orders = await storage.listAllOrders();
+    res.json(orders);
+});
+
+// Advance (or cancel) an order's fulfillment, enforcing legal transitions.
+app.patch("/admin/orders/:id/status", async (req, res) => {
+    const target = String((req.body && req.body.fulfillmentStatus) || "").trim().toLowerCase();
+    if (!(target in FULFILLMENT_TRANSITIONS)) {
+        return res.status(400).json({
+            error: `fulfillmentStatus must be one of: ${Object.keys(FULFILLMENT_TRANSITIONS).join(", ")}`,
+        });
+    }
+
+    const order = await findOrder(req.params.id);
+    if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+    }
+
+    // Legacy orders created before this field default to "scheduled".
+    const current = order.fulfillmentStatus || "scheduled";
+    if (!FULFILLMENT_TRANSITIONS[current].includes(target)) {
+        return res.status(400).json({
+            error: `Cannot move an order from "${current}" to "${target}".`,
+        });
+    }
+
+    order.fulfillmentStatus = target;
+    order.updatedAt = new Date().toISOString();
+    // Write the order + history in one transaction, and bill the history to the
+    // order's OWNER (not the admin) so it shows in the customer's own history.
+    await saveOrderWithHistory(
+        order,
+        "fulfillment_status",
+        req.userId,
+        { from: current, to: target },
+        order.userId
+    );
+
+    res.json(order);
 });
 
 // Mount payment routes (Cash App Pay + payment options)

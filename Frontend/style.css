@@ -782,6 +782,51 @@ button:hover::before {
     flex-wrap: wrap;
 }
 
+.checkout-fulfillment {
+    margin-top: 16px;
+    border-top: 2px dashed var(--accent-primary);
+    padding-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: var(--text-strong);
+}
+
+.checkout-fulfillment h3 {
+    margin: 0 0 4px;
+}
+
+.checkout-fulfillment label {
+    font-weight: 600;
+    margin-top: 4px;
+}
+
+.checkout-field {
+    padding: 8px 10px;
+    border: 1px solid var(--accent-primary);
+    border-radius: 8px;
+    background: var(--surface-card);
+    color: var(--text-strong);
+    font: inherit;
+}
+
+.checkout-note {
+    margin: 6px 0 0;
+    font-size: 0.9em;
+    color: var(--text-muted);
+}
+
+.admin-orders {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-top: 12px;
+}
+
+.admin-order p {
+    margin: 4px 0;
+}
+
 .auth-card-layout {
     display: grid;
     justify-items: center;

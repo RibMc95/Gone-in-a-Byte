@@ -16,7 +16,26 @@ server {
     location = /50x.html { }
     location = /maintenance.html { }
 
+    # Cookie photos / fonts: safe to cache a while, since a changed image
+    # normally ships under a new filename. These exact-asset locations sit
+    # OUTSIDE the maintenance gate on purpose, so the maintenance page can
+    # still load its own styling/images.
+    location ~* \.(?:jpg|jpeg|png|gif|webp|svg|ico|woff|woff2|ttf)$ {
+        expires 7d;
+    }
+
+    # CSS/JS carry the menu + prices and have no content-hash in their names,
+    # so keep the cache short — repeat loads are fast but a price change shows
+    # within minutes. nginx's ETag/Last-Modified still return 304s in between.
+    location ~* \.(?:css|js)$ {
+        expires 5m;
+    }
+
     location / {
+        # HTML always revalidates, so content edits and the maintenance toggle
+        # below take effect immediately (no stale cached page).
+        expires -1;
+
         # MAINTENANCE_MODE is substituted at container start (on | off).
         set $maintenance ${MAINTENANCE_MODE};
         if ($maintenance = "on") {

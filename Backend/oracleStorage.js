@@ -9,6 +9,12 @@ const DEFAULT_HISTORY_TABLE = process.env.ORACLE_HISTORY_TABLE || "ORDER_HISTORY
 // reclaimable (e.g. the server crashed mid-charge). Default 5 minutes.
 const PROCESSING_TIMEOUT_MS = Number(process.env.PAYMENT_PROCESSING_TIMEOUT_MS) || 5 * 60 * 1000;
 
+// How long a logged-in user's cached order list / history stays fresh before
+// it's re-read from the DB. Every write of that user's busts their entry, so
+// this only bounds staleness as a backstop. Single-process only (fine for our
+// one backend instance; see scaling-roadmap.md for the Redis version at scale).
+const USER_CACHE_TTL_MS = Number(process.env.USER_CACHE_TTL_MS) || 30 * 1000;
+
 let poolPromise;
 
 function getRequiredEnv(name) {
@@ -108,6 +114,44 @@ function parseJson(payload) {
 }
 
 function createOracleStorage() {
+    // Per-user read caches: userId -> { expires, data }. The order list and
+    // history are read far more often than they change (a logged-in customer
+    // reloads their orders page), so a short-lived cache saves most DB round
+    // trips without ever serving stale data — any write of the user's clears
+    // their entry below.
+    const orderListCache = new Map();
+    const historyCache = new Map();
+
+    function cacheGet(cache, key) {
+        const hit = cache.get(key);
+        if (!hit) {
+            return undefined;
+        }
+        if (hit.expires <= Date.now()) {
+            cache.delete(key);
+            return undefined;
+        }
+        return hit.data;
+    }
+
+    function cacheSet(cache, key, data) {
+        cache.set(key, { expires: Date.now() + USER_CACHE_TTL_MS, data });
+    }
+
+    // Drop a user's cached order list AND history after any write of theirs.
+    // With no userId on hand (e.g. deleteOrder by id only) we can't tell whose
+    // list changed, so clear everything — correctness beats a cache hit.
+    function invalidateUser(userId) {
+        const key = safeString(userId);
+        if (key) {
+            orderListCache.delete(key);
+            historyCache.delete(key);
+        } else {
+            orderListCache.clear();
+            historyCache.clear();
+        }
+    }
+
     async function init() {
         const ensureOrdersSchema = withConnection(async (connection) => {
             await executeDdl(
@@ -231,6 +275,7 @@ function createOracleStorage() {
             await connection.commit();
         });
 
+        invalidateUser(order && order.userId);
         return order;
     }
 
@@ -244,6 +289,7 @@ function createOracleStorage() {
             await connection.commit();
         });
 
+        invalidateUser(order && order.userId);
         return order;
     }
 
@@ -297,6 +343,7 @@ function createOracleStorage() {
             order.updatedAt = new Date().toISOString();
             await mergeOrderStmt(connection, order);
             await connection.commit();
+            invalidateUser(order.userId);
             return { status: "claimed", order };
         });
     }
@@ -320,13 +367,52 @@ function createOracleStorage() {
     }
 
     async function listOrdersByUser(userId) {
-        return withConnection(async (connection) => {
+        const key = safeString(userId);
+        const cached = cacheGet(orderListCache, key);
+        if (cached) {
+            return cached;
+        }
+
+        const orders = await withConnection(async (connection) => {
             const result = await connection.execute(
                 `SELECT ORDER_JSON
                  FROM ${DEFAULT_ORDERS_TABLE}
                  WHERE USER_ID = :userId
                  ORDER BY CREATED_AT DESC`,
-                { userId: safeString(userId) },
+                { userId: key },
+                { outFormat: oracledb.OUT_FORMAT_OBJECT }
+            );
+
+            return (result.rows || []).reduce((acc, row) => {
+                const parsed = parseJson(row.ORDER_JSON);
+                if (parsed) {
+                    acc.push(parsed);
+                }
+                return acc;
+            }, []);
+        });
+
+        cacheSet(orderListCache, key, orders);
+        return orders;
+    }
+
+    // Cheap "is the DB reachable?" check for the health endpoint.
+    async function ping() {
+        return withConnection(async (connection) => {
+            await connection.execute("SELECT 1 FROM DUAL");
+            return true;
+        });
+    }
+
+    // Every order across all users, newest first. For the admin/kitchen queue.
+    // Not cached (admin-only, low volume, and must always be current).
+    async function listAllOrders() {
+        return withConnection(async (connection) => {
+            const result = await connection.execute(
+                `SELECT ORDER_JSON
+                 FROM ${DEFAULT_ORDERS_TABLE}
+                 ORDER BY CREATED_AT DESC`,
+                {},
                 { outFormat: oracledb.OUT_FORMAT_OBJECT }
             );
 
@@ -345,6 +431,9 @@ function createOracleStorage() {
             await deleteOrderStmt(connection, orderId);
             await connection.commit();
         });
+
+        // No userId available here, so clear all cached lists (see invalidateUser).
+        invalidateUser();
     }
 
     // Delete an order AND record a history entry in a SINGLE transaction.
@@ -354,6 +443,8 @@ function createOracleStorage() {
             await insertHistoryStmt(connection, historyEntry);
             await connection.commit();
         });
+
+        invalidateUser(historyEntry && historyEntry.userId);
     }
 
     async function addHistoryEntry(entry) {
@@ -362,17 +453,24 @@ function createOracleStorage() {
             await connection.commit();
         });
 
+        invalidateUser(entry && entry.userId);
         return entry;
     }
 
     async function listHistoryForUser(userId) {
-        return withConnection(async (connection) => {
+        const key = safeString(userId);
+        const cached = cacheGet(historyCache, key);
+        if (cached) {
+            return cached;
+        }
+
+        const history = await withConnection(async (connection) => {
             const result = await connection.execute(
                 `SELECT ENTRY_JSON
                  FROM ${DEFAULT_HISTORY_TABLE}
                  WHERE USER_ID = :userId
                  ORDER BY EVENT_TS DESC`,
-                { userId: safeString(userId) },
+                { userId: key },
                 { outFormat: oracledb.OUT_FORMAT_OBJECT }
             );
 
@@ -384,6 +482,9 @@ function createOracleStorage() {
                 return acc;
             }, []);
         });
+
+        cacheSet(historyCache, key, history);
+        return history;
     }
 
     return {
@@ -393,6 +494,8 @@ function createOracleStorage() {
         claimOrderForPayment,
         getOrder,
         listOrdersByUser,
+        listAllOrders,
+        ping,
         deleteOrder,
         deleteOrderWithHistory,
         addHistoryEntry,
